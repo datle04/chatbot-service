@@ -198,3 +198,24 @@ export const extractTimeRange = async (question: string) => {
   const llmResult = await extractTimeRangeLLM(question);
   return llmResult;
 };
+
+/**
+ * Hàm tính tổng số ngày dựa vào startDate và endDate
+ */
+export const calculateTotalDays = (startDate: string, endDate: string): number => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  // Kiểm tra tính hợp lệ
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    throw new Error("Ngày không hợp lệ");
+  }
+
+  // Tính chênh lệch thời gian (ms)
+  const diffMs = end.getTime() - start.getTime();
+
+  // 1 ngày = 1000ms * 60s * 60m * 24h
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+  return diffDays;
+};

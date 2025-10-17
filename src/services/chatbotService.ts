@@ -12,6 +12,8 @@ export const chatbotService = async (userId: string, question: string, token: st
     // 1️⃣ Phân tích intent bằng Gemini
     const intentPrompt = `
     Bạn là hệ thống phân tích câu hỏi người dùng về tài chính cá nhân.
+    Nhiệm vụ của bạn là trích xuất 'intent', 'timeRange', 'category' và 'type' từ câu hỏi.
+    Thời gian hiện tại là: ${new Date().toISOString()}
     Danh sách intent hợp lệ:
     - total_expense
     - total_income
@@ -26,8 +28,8 @@ export const chatbotService = async (userId: string, question: string, token: st
     - lowest_income
     - spending_by_category
     - saving_summary
-    - average_spending_daily_base_on_income
-    - average_spending_daily_base_on_expense
+    - average_spending_base_on_income
+    - average_spending_base_on_expense
     - spending_trend
     - income_trend
     - unknown
@@ -68,22 +70,21 @@ export const chatbotService = async (userId: string, question: string, token: st
     });
 
     try {
-      await axios.post(`${process.env.FINTRACK_API_URL}/chat-history`, {
-        userId,
-        role: "user",
-        text: question,
-      }, { headers: { Authorization: `Bearer ${token}` } });
-
-      await axios.post(`${process.env.FINTRACK_API_URL}/chat-history`, {
-        userId,
-        role: "bot",
-        text: result.reply,
-      }, { headers: { Authorization: `Bearer ${token}` } });
-
+      await Promise.all([
+        axios.post(`${process.env.FINTRACK_API_URL}/chat-history`, {
+          userId,
+          role: "user",
+          text: question,
+        }, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.post(`${process.env.FINTRACK_API_URL}/chat-history`, {
+          userId,
+          role: "bot",
+          text: result.reply,
+        }, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
     } catch (error) {
       console.error("⚠️ Lỗi khi lưu chat history:", error);
     }
-
     // Lưu context
     await saveUserContext(userId, {
       intent: intentData.intent,
