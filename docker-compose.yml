@@ -1,0 +1,34 @@
+services:
+  chatbot-service:
+    build: .
+    container_name: fintrack-chatbot
+    ports:
+      - "4001:4001"
+    environment:
+      - NODE_ENV=development
+      - JWT_SECRET=fintrack_secret_key
+      - GEMINI_API_KEY=AIzaSyCi8XoRadzRune665zLiHisPBs496SZ9qA
+      - GEMINI_API_URL=https://api.gemini.example/v1
+      - FINTRACK_API_URL=http://fintrack-backend:5000/api
+      - PORT=4001
+      - REDIS_URL=redis://redis_server:6379
+    depends_on:
+      - redis_server
+    networks:
+      - fintrack-network
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npx nodemon
+
+  redis_server:
+    image: redis:7-alpine
+    container_name: fintrack-redis
+    ports:
+      - "6380:6379"
+    networks:
+      - fintrack-network
+
+networks:
+  fintrack-network:
+    external: true

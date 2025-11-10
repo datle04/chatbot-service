@@ -1,110 +1,96 @@
-// src/services/intentHandler.ts
-import * as fintrackClient from "./fintrackClient";
-import { generateReply } from "./geminiReplyService";
-import { calculateTotalDays } from "./timeParser";
+// File: src/services/intentHandler.ts
 
-interface IntentHandlerParams {
-  intent: string;
-  userToken?: string;
-  userId: string;
-  timeRange: {
-    startDate: string;
-    endDate: string;
-  };
-  type?: string;
-  category?: string;
-  order?: string;
+import { getSummaryStats } from "../intent-handlers/read/getSummaryStats";
+import { listTransactions } from "../intent-handlers/read/listTransactions";
+import { getTopCategory } from "../intent-handlers/read/getTopSpendingIncomeCategory";
+import { ExtractedData } from "./geminiExtractor";
+import { listRecurring } from "../intent-handlers/read/listRecurring";
+import { getTopTransaction } from "../intent-handlers/read/getTopTransactions";
+import { getTrendStats } from "../intent-handlers/read/getTrendStats";
+import { getCategoryStats } from "../intent-handlers/read/getCategoryStats";
+import { checkBudgetStatus } from "../intent-handlers/read/checkBudgetStatus";
+import { listOverspentBudgets } from "../intent-handlers/read/listOverspentBudgets";
+import { listSavingGoals } from "../intent-handlers/read/listSavingGoals";
+import { checkGoalProgress } from "../intent-handlers/read/checkGoalProgress";
+import { getAverageSpending } from "../intent-handlers/read/getAverageSpending";
+import { getDailyAllowance } from "../intent-handlers/read/getDailyAllowance";
+import { getAverageTransactionValue } from "../intent-handlers/read/getAverageTransactionValue";
+import { getPeriodComparison } from "../intent-handlers/read/getPeriodComparison";
+import { getSpendingForecast } from "../intent-handlers/read/getSpendingForecast";
+
+// Import các file xử lý cụ thể
+// import { getTotalExpense } from '../intent-handlers/read/getTotalExpense';
+
+// Định nghĩa kiểu trả về chung
+export interface HandlerResult {
+  reply: string;
+  [key: string]: any; // Có thể chứa thêm data nếu client cần
 }
 
-export const handleIntent = async ({ intent, userId, userToken, timeRange, type = "", category = "", order = "" }: IntentHandlerParams) => {
-  const { startDate, endDate } = timeRange;
-  let data: any;
+// "Bản đồ" (Map) các intent
+const intentMap: {
+  [key: string]: (data: ExtractedData) => Promise<HandlerResult>;
+} = {
+  // Read Intents
+  total_expense: getSummaryStats, 
+  total_income: getSummaryStats, 
+  compare_income_vs_expense: getSummaryStats,
+  list_transactions: listTransactions,
+  list_recurring: listRecurring,
+  top_spending_category: getTopCategory,
+  top_income_category: getTopCategory,
+  highest_expense: getTopTransaction,
+  lowest_expense: getTopTransaction,
+  highest_income: getTopTransaction,
+  lowest_income: getTopTransaction,
+  spending_trend: getTrendStats,
+  income_trend: getTrendStats,
+  spending_by_category: getCategoryStats,
+  income_by_category: getCategoryStats,
+  check_budget_status: checkBudgetStatus,
+  check_category_budget: checkBudgetStatus,
+  list_overspent_budgets: listOverspentBudgets,
+  list_saving_goals: listSavingGoals,
+  check_goal_progress: checkGoalProgress,
+  average_spending: getAverageSpending,
+  daily_allowance_by_income: getDailyAllowance,
+  average_transaction_value: getAverageTransactionValue,
+  compare_period_over_period: getPeriodComparison,
+  forecast_spending: getSpendingForecast,
+  /* 
+  check_budget_status: Lấy tóm tắt chung về tất cả các ngân sách (ví dụ: đã dùng 80%, còn lại 2.000.000đ). x
+  check_category_budget: Lấy chi tiết của một ngân sách danh mục cụ thể. x
+  list_overspent_budgets: Liệt kê các danh mục đã chi tiêu vượt quá ngân sách đã đặt. x 
 
-  try {
-    switch (intent) {
-      case "total_expense": {
-        const result = await fintrackClient.getCategoryStats(userToken, startDate, endDate, 'expense');
-        data = { total: result.total }; // Chỉ truyền dữ liệu cần thiết
-        break;
-      }
+  list_saving_goals: Liệt kê tất cả các mục tiêu và tiến độ chung. x
+  check_goal_progress: Lấy chi tiết một mục tiêu cụ thể. x
+  
+  average_spending x
+  average_transaction_value: Lấy total_expense / số lượng giao dịch. x
 
-      case "total_income": {
-        const result = await fintrackClient.getCategoryStats(userToken, startDate, endDate, 'income');
-        data = { total: result.total };
-        break;
-      }
+  So Sánh & Dự Đoán Nâng Cao
+  compare_period_over_period: Lấy 2 khoảng thời gian và so sánh % tăng/giảm. x
+  forecast_spending: Dựa trên chi tiêu trung bình, dự đoán tổng chi tiêu. 
+  check_unusual_spending: Tìm các giao dịch lớn bất thường so với mức trung bình của danh mục đó.
+  */
 
-      case "list_transactions": {
-        data = await fintrackClient.listTransactions(userToken, startDate, endDate, type, category);
-        break;
-      }
+  // Write Intents
+  // add_transaction: addTransaction,
+};
 
-      case "list_recurring": {
-        data = await fintrackClient.listRecurring(userToken);
-        break;
-      }
+// Hàm "điều phối" (Router)
+export const handleIntent = async (
+  data: ExtractedData
+): Promise<HandlerResult> => {
+  const handler = intentMap[data.intent];
 
-      case "top_spending_category":
-      case "top_income_category": {
-        const transactionType = intent === "top_spending_category" ? 'expense' : 'income';
-        data = await fintrackClient.getTopSpendingIncomeCategory(userToken, startDate, endDate, transactionType);
-        break;
-      }
-      
-      case "compare_income_vs_expense":
-      case "saving_summary": {
-        const summary = await fintrackClient.fetchDashboardSummary(userToken, startDate, endDate);
-        const days = calculateTotalDays(startDate, endDate); // Thêm tính ngày
-        // Thống nhất cấu trúc dữ liệu
-        data = {
-            summary: summary,
-            days: days, // Gửi cả số ngày để Gemini có thêm ngữ cảnh
-        };
-        break;
-      }
-
-      case "highest_expense":
-      case "lowest_expense":
-      case "highest_income":
-      case "lowest_income": {
-        const transactionType = intent.includes('income') ? 'income' : 'expense';
-        const sortOrder = intent.startsWith('highest') ? 'desc' : 'asc';
-        data = await fintrackClient.getTopTransactions(userToken, startDate, endDate, transactionType, sortOrder);
-        break;
-      }
-
-      case "average_spending_base_on_income":
-      case "average_spending_base_on_expense": {
-        const summary = await fintrackClient.fetchDashboardSummary(userToken, startDate, endDate);
-        const days = calculateTotalDays(startDate, endDate);
-        
-        // Đóng gói tất cả dữ liệu cần thiết cho Gemini
-        data = {
-          summary: summary,
-          days: days,
-        };
-        break;
-      }
-
-      case "spending_trend":
-      case "income_trend": {
-        const type = intent.includes('income') ? 'income' : 'expense';
-        // Gọi hàm lấy dữ liệu chuỗi thời gian
-        data = await fintrackClient.getTimeSeriesData(userToken, timeRange.startDate, timeRange.endDate, type);
-        break;
-      }
-
-      default:
-        return { reply: "🤔 Mình chưa hiểu ý bạn — bạn có thể nói rõ hơn không?", data: null };
-    }
-
-    // Sau khi có data, gọi service của Gemini để tạo reply
-    const reply = await generateReply(intent, data, timeRange);
-    
-    return { reply, data };
-
-  } catch (error) {
-    console.error(`Error handling intent ${intent}:`, error);
-    return { reply: "😔 Rất tiếc, đã có lỗi xảy ra khi mình xử lý yêu cầu của bạn.", data: null };
+  if (handler) {
+    return await handler(data);
   }
+
+  // Xử lý intent 'unknown'
+  console.warn(`No handler found for intent: ${data.intent}`);
+  return {
+    reply: "Xin lỗi, tôi chưa hiểu ý của bạn hoặc tôi chưa được lập trình để làm điều đó.",
+  };
 };
