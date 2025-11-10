@@ -1,7 +1,30 @@
 // src/services/fintrackClient.ts
-import axios from "axios";
-
+import axios, { AxiosInstance } from "axios";
 const FINTRACK_API = process.env.FINTRACK_API_URL;
+
+/**
+ * Hàm này tạo ra một Axios instance được cấu hình sẵn
+ * để gọi đến FinTrack API với token xác thực.
+ */
+export const createFinTrackApiClient = (token: string): AxiosInstance => {
+  const apiClient = axios.create({
+    baseURL: FINTRACK_API, // ✅ Tự động thêm base URL
+  });
+
+  // Sử dụng interceptor để tự động gắn token vào *mọi* request
+  apiClient.interceptors.request.use(
+    (config) => {
+      // Gắn Bearer token vào header
+      config.headers.Authorization = `Bearer ${token}`;
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
+    }
+  );
+
+  return apiClient;
+};
 
 // Interface cho dữ liệu Dashboard
 export interface DashboardSummary {
@@ -16,21 +39,39 @@ export interface DashboardSummary {
  * Lấy thống kê theo danh mục cho income hoặc expense.
  * Gộp từ 2 hàm getTotalExpense và getTotalIncome.
  */
-export const getCategoryStats = async (token: string | undefined, start: string, end: string, type: 'income' | 'expense') => {
+export const getCategoryStats = async (
+  token: string | undefined, // Token vẫn được truyền vào
+  start: string,
+  end: string,
+  type: "income" | "expense"
+) => {
   type Item = {
     category: string;
-    total: number;
+    baseAmount: number;
+    displayAmount: number;
   };
-  const res = await axios.get(`${FINTRACK_API}/stats/category-stats`, {
-    headers: { Authorization: `Bearer ${token}` },
-    params: { type, startDate: start, endDate: end },
+
+  // 1. Thêm một bước kiểm tra token
+  if (!token) {
+    throw new Error("Missing authentication token for getCategoryStats");
+  }
+
+  // 2. Tạo client API chuyên dụng với token này
+  const apiClient = createFinTrackApiClient(token);
+
+  // 3. Gọi API bằng client mới
+  const res = await apiClient.get(`/stats/category-stats`, {
+    params: { type, startDate: start, endDate: end }, // params vẫn giữ nguyên
   });
-  
-  const total = res.data.reduce((acc: number, curr: Item) => acc + curr.total, 0);
-  
+
+  console.log(res.data);
+
+  const total = res?.data?.stats?.reduce((acc: number, curr: Item) => acc + curr.displayAmount, 0);
+
   return {
     total,
-    details: res.data // Dữ liệu chi tiết từng danh mục
+    details: res.data.stats, // Dữ liệu chi tiết từng danh mục
+    currency: res.data.currency
   };
 };
 
@@ -43,10 +84,14 @@ export const fetchDashboardSummary = async (
   startDate: string,
   endDate: string
 ): Promise<DashboardSummary> => {
-  const url = `${FINTRACK_API}/dashboard?startDate=${startDate}&endDate=${endDate}`;
-  const response = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  if (!token) {
+    throw new Error("Missing authentication token for listTransactions");
+  }
+
+  const apiClient = createFinTrackApiClient(token);
+
+  const url = `/dashboard?startDate=${startDate}&endDate=${endDate}`;
+  const response = await apiClient.get(url);
   return response.data;
 };
 
@@ -61,38 +106,64 @@ export const listTransactions = async (
   category: string,
   limit = 50
 ) => {
-  const res = await axios.get(`${FINTRACK_API}/transaction`, {
-    headers: { Authorization: `Bearer ${token}` },
+
+  if (!token) {
+    throw new Error("Missing authentication token for listTransactions");
+  }
+
+  const apiClient = createFinTrackApiClient(token);
+
+  const res = await apiClient.get(`/transaction`, {
     params: { startDate: start, endDate: end, type, category, limit},
   });
   return res.data;
 };
 
 export const getTopSpendingIncomeCategory = async (token: string | undefined, start: string, end: string, type: string) => {
-  const res = await axios.get(`${FINTRACK_API}/stats/category-stats`, {
-    headers: { Authorization: `Bearer ${token}` },
+
+  if (!token) {
+    throw new Error("Missing authentication token for listTransactions");
+  }
+  const apiClient = createFinTrackApiClient(token);
+
+  const res = await apiClient.get(`/stats/category-stats`, {
     params:{ type, startDate: start, endDate: end }
   });
 
-  const topCategory = [...res.data].sort((a,b) => b.total - a.total)[0];
+  console.log(res.data);
+  
+  const topCategory = [...res.data.stats].sort((a,b) => b.displayAmount - a.displayAmount)[0];
   return {
     top: topCategory,
-    data: res.data,
+    data: res.data.stats,
+    currency: res.data.currency
   }
 }
 
 export const listRecurring = async (token: string | undefined) => {
-    const res = await axios.get(`${FINTRACK_API}/transaction/recurring`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  if (!token) {
+    throw new Error("Missing authentication token for listTransactions");
+  }
+
+  const apiClient = createFinTrackApiClient(token);
+
+  const res = await apiClient.get(`/transaction/recurring`);
   return res.data.data;
 }
 
 export const getTopTransactions = async (token: string | undefined, start: string, end: string, type: string, order: string) => {
-    const res = await axios.get(`${FINTRACK_API}/transaction/top-transactions`, {
-    headers: { Authorization: `Bearer ${token}` },
+  if (!token) {
+    throw new Error("Missing authentication token for listTransactions");
+  }
+
+  const apiClient = createFinTrackApiClient(token);
+
+  const res = await apiClient.get(`/transaction/top-transactions`, {
     params:{ startDate: start, endDate: end, type, order }
   });
+
+  console.log(res);
+
   return res.data;
 }
 
@@ -161,6 +232,12 @@ export const getTopTransactions = async (token: string | undefined, start: strin
  * @returns Mảng dữ liệu tổng hợp theo từng tháng.
  */
 export const getTimeSeriesData = async (token: string | undefined, startDate: string, endDate: string, type: 'income' | 'expense') => {
+  if (!token) {
+    throw new Error("Missing authentication token for getTimeSeriesData");
+  }
+
+  const apiClient = createFinTrackApiClient(token);
+
   const series: { period: string; total: number }[] = [];
   const start = new Date(startDate);
   const end = new Date(endDate);

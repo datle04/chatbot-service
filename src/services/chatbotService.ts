@@ -1,108 +1,60 @@
-import axios from "axios";
+// File: src/services/chatbotService.ts
+import { normalizeCategory } from "../types/categoryMapper";
 import { getUserContext, saveUserContext } from "./contextManager";
-import { askGemini } from "./geminiService";
-import { handleIntent } from "./intentHandler";
-import { extractTimeRange } from "./timeParser";
-import { extractTypeAndCategory } from "./extractTypeCategory";
+import { createFinTrackApiClient } from "./fintrackClient";
+import { getExtractedDataFromGemini, ExtractedData } from "./geminiExtractor"; // <-- Dùng file mới
+import { handleIntent } from "./intentHandler"; // <-- Dùng file mới
 
-export const chatbotService = async (userId: string, question: string, token: string) => {
+export const chatbotService = async (
+  userId: string,
+  question: string,
+  token: string
+) => {
   try {
     const prevContext = await getUserContext(userId);
 
-    // 1️⃣ Phân tích intent bằng Gemini
-    const intentPrompt = `
-    Bạn là hệ thống phân tích câu hỏi người dùng về tài chính cá nhân.
-    Nhiệm vụ của bạn là trích xuất 'intent', 'timeRange', 'category' và 'type' từ câu hỏi.
-    Thời gian hiện tại là: ${new Date().toISOString()}
-    Danh sách intent hợp lệ:
-    - total_expense
-    - total_income
-    - list_transactions
-    - list_recurring
-    - top_spending_category
-    - top_income_category
-    - compare_income_vs_expense
-    - highest_expense
-    - highest_income
-    - lowest_expense
-    - lowest_income
-    - spending_by_category
-    - saving_summary
-    - average_spending_base_on_income
-    - average_spending_base_on_expense
-    - spending_trend
-    - income_trend
-    - unknown
+    const parsedData: ExtractedData = await getExtractedDataFromGemini(
+      question,
+      prevContext
+    );
 
-    ${prevContext ? `Ngữ cảnh trước đó: intent="${prevContext.intent}", thời gian="${JSON.stringify(prevContext.timeRange)}"` : ""}
-    Nếu người dùng đang hỏi follow-up (ví dụ: "vậy còn tháng trước thì sao?"), hãy suy luận intent và thời gian dựa trên ngữ cảnh trước đó.
-    Trả về JSON đúng cấu trúc:
-    {
-      "intent": "income_trend"
+    // Chuẩn hóa category
+    if (parsedData.category_keyword) {
+      // 'category' sẽ là key hệ thống (ví dụ: "food")
+      parsedData.category = normalizeCategory(parsedData.category_keyword);
     }
 
-    Câu hỏi: "${question}"
-    `;
+    // Gắn thêm token và userId để các handler sử dụng
+    parsedData.token = token;
+    parsedData.userId = userId;
 
+    // Intent điều phối
+    const result = await handleIntent(parsedData);
 
-    const intentRaw = await askGemini(intentPrompt);
-    const intentData = JSON.parse(intentRaw.replace(/```json|```/g, "").trim());
-
-    // 2️⃣ Phân tích khoảng thời gian
-    const timeRange = await extractTimeRange(question);
-    const { type, category } = extractTypeAndCategory(question);
-    const startDate =
-      timeRange?.startDate ??
-      new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-        .toISOString()
-        .split("T")[0];
-    const endDate =
-      timeRange?.endDate ?? new Date().toISOString().split("T")[0];
-
-    // 3️⃣ Gọi xử lý intent
-    const result = await handleIntent({
-      intent: intentData.intent,
-      userId,
-      userToken: token,
-      timeRange: { startDate, endDate },
-      type,
-      category
-    });
-
+    // Lưu tin nhắn
+    const apiClient = createFinTrackApiClient(token);
     try {
       await Promise.all([
-        axios.post(`${process.env.FINTRACK_API_URL}/chat-history`, {
-          userId,
-          role: "user",
-          text: question,
-        }, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.post(`${process.env.FINTRACK_API_URL}/chat-history`, {
-          userId,
-          role: "bot",
-          text: result.reply,
-        }, { headers: { Authorization: `Bearer ${token}` } })
+        apiClient.post("/chat-history", { role: "user", text: question }),
+        apiClient.post("/chat-history", { role: "bot", text: result.reply }),
       ]);
     } catch (error) {
       console.error("⚠️ Lỗi khi lưu chat history:", error);
     }
-    // Lưu context
+
+    // 4️⃣ Lưu context mới
     await saveUserContext(userId, {
-      intent: intentData.intent,
-      timeRange: { startDate, endDate },
+      intent: parsedData.intent,
+      timeRange: parsedData.timeRange,
     });
 
-    // 4️⃣ Trả kết quả
+    // 5️⃣ Trả kết quả
     return {
-      intent: intentData.intent,
-      timeRange: { startDate, endDate },
+      intent: parsedData.intent,
+      timeRange: parsedData.timeRange,
       result,
     };
   } catch (error) {
     console.error("❌ chatbotService error:", error);
-    return {
-      intent: "unknown",
-      timeRange: null,
-      error: error instanceof Error ? error.message : error,
-    };
   }
 };
