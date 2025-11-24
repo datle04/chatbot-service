@@ -6,18 +6,25 @@ export interface ExtractedData {
   intent: string;
   timeRange: { startDate: string; endDate: string } | null;
   category_keyword?: string; 
-  category?: string; 
   type?: "income" | "expense";
-  amount?: number;
-  currency_cue?: string;
+  currency?: string;
+  category?: string; // AI trả về thẳng "food", không phải "cà phê"
+  amount?: number;   // AI trả về thẳng 50000, không phải 50
   description?: string;
-  specificDate?: string | null; 
+  // specificDate?: string | null; 
+  transactionDate?: string | null;
   compareTimeRange?: { startDate: string; endDate: string } | null;
   comparisonType?: "income" | "expense";
   goal_name?: string;
   token?: string; 
   userId?: string; 
 }
+
+const SYSTEM_CATEGORIES = [
+  "food", "transportation", "education", "entertainment", "shopping",
+  "housing", "health", "travel", "rent", "bonus", "salary", 
+  "investment", "saving", "other", "sales",
+].join(", ");
 
 const DEFAULT_START_DATE = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0];
 const DEFAULT_END_DATE = new Date().toISOString().split("T")[0];
@@ -59,12 +66,24 @@ export const getExtractedDataFromGemini = async (
   Các thực thể (Entities) cần trích xuất:
   1.  "intent": (string) Bắt buộc.
   2.  "timeRange": (object) { "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }.
-  3.  "category_keyword": (string) TỪ KHÓA danh mục thô (ví dụ: "ăn uống", "cà phê", "xăng").
-  4.  "type": (string) Chỉ "income" hoặc "expense".
-  5.  "amount": (number) Số tiền (ví dụ: 50k -> 50000).
-  6.  "currency_cue": (string) Từ khóa tiền tệ (ví dụ: "k", "đô", "$", "vnd").
-  7.  "description": (string) Mô tả cho giao dịch mới.
-  8.  "specificDate": (string) "YYYY-MM-DD" // <-- SỬA 2: THÊM THỰC THỂ BỊ THIẾU
+  3. "category": (string) Bắt buộc. Phân tích từ khóa của người dùng và ÁNH XẠ về một trong các category hệ thống ở trên. 
+     - Ví dụ: "cà phê", "ăn sáng" -> "food". 
+     - "đổ xăng", "grab" -> "transportation". 
+     - "đi xem phim" -> "entertainment".
+     - Nếu người dùng nói "đặt tổng ngân sách", "ngân sách tháng này", trả về "TOTAL".
+      - Nếu là danh mục cụ thể, trả về key hệ thống ("food", "transportation"...).
+     - Nếu không tìm thấy map phù hợp, trả về "other".
+  4. "type": (string) "income" hoặc "expense". Tự suy luận dựa trên category.
+     - Ví dụ: category là "salary", "bonus" -> "income".
+     - Còn lại đa số là "expense".
+  5. "amount": (number) Số tiền thực tế. 
+     - Tự động xử lý đơn vị: "50k", "50 nghìn" -> 50000. "1 triệu", "1 củ" -> 1000000. 
+     - Giữ nguyên nếu là ngoại tệ: "50 usd" -> 50.
+  5. "currency": (string) Mã tiền tệ chuẩn ISO (VND, USD, EUR...). 
+     - Mặc định là "VND" nếu người dùng không nói rõ (hoặc dùng "k", "nghìn").
+     - Nếu người dùng nói "đô", "usd" -> "USD".
+  7.  "description": (string) Mô tả giao dịch (lấy nguyên văn phần nội dung từ người dùng).
+  8.  "transactionDate": (string) "YYYY-MM-DD" 
   9.  "goal_name": (string) Tên của mục tiêu tiết kiệm (ví dụ: "laptop", "du lịch Nhật Bản").
   10. "compareTimeRange": (object) { "startDate": "...", "endDate": "..." } (Kỳ so sánh)
   11. "comparisonType": (string) "income" hoặc "expense".
@@ -74,8 +93,8 @@ export const getExtractedDataFromGemini = async (
 Bạn PHẢI dựa vào "intent" để quyết định điền thực thể ngày tháng nào:
 
 **1. Nếu intent là "GHI" (ví dụ: add_transaction, add_budget):**
-   - **Ưu tiên** điền vào "specificDate".
-   - Nếu người dùng không nói ngày (ví dụ: "thêm 50k cà phê"), hãy MẶC ĐỊNH "specificDate" là ngày hôm nay: "${TODAY}".
+   - **Ưu tiên** điền vào "transactionDate".
+   - Nếu người dùng không nói ngày (ví dụ: "thêm 50k cà phê"), hãy MẶC ĐỊNH "transactionDate" là ngày hôm nay: "${TODAY}".
    - Nếu người dùng nói (ví dụ: "hôm qua", "ngày 5/11"), hãy điền ngày đó.
    - TRONG TRƯỜNG HỢP NÀY, "timeRange" phải là "null".
    - Nếu người dùng đề cập đến 1 ngày cụ thể (ví dụ 21/8), ưu tiên định dạng ngày tháng là DD/MM/YYYY, nếu không có tháng hoặc năm, mặc định là tháng hoặc năm hiện tại
@@ -85,7 +104,7 @@ Bạn PHẢI dựa vào "intent" để quyết định điền thực thể ngà
    - Nếu người dùng không nói (ví dụ: "tổng chi?"), hãy kiểm tra ngữ cảnh.
    - Nếu không có ngữ cảnh, hãy MẶC ĐỊNH "timeRange" là tháng này:
      { "startDate": "${DEFAULT_START_DATE}", "endDate": "${DEFAULT_END_DATE}" }
-   - TRONG TRƯỜNG HỢP NÀY, "specificDate" phải là "null".
+   - TRONG TRƯỜNG HỢP NÀY, "transactionDate" phải là "null".
   
   **3. Nếu intent là "compare_period_over_period":**
    - **Ưu tiên** trích xuất "timeRange" (kỳ hiện tại) VÀ "compareTimeRange" (kỳ so sánh).
@@ -123,7 +142,7 @@ Bạn PHẢI dựa vào "intent" để quyết định điền thực thể ngà
 
   // 2. Đảm bảo các trường được trả về đúng như quy tắc phòng AI trả sai
   if (READ_INTENTS.includes(parsedData.intent)) {
-    parsedData.specificDate = null; 
+    parsedData.transactionDate = null; 
   } else if (WRITE_INTENTS.includes(parsedData.intent)) {
     parsedData.timeRange = null; 
   }
