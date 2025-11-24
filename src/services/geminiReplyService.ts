@@ -621,6 +621,8 @@ const _generateForecastReply = async (data: any): Promise<string> => {
         - Nếu 'totalBudget' = 0: Bỏ qua, không so sánh.
         - Nếu 'forecastedTotal' < 'totalBudget': Chúc mừng (ví dụ: "Bạn đang đi đúng hướng!").
         - Nếu 'forecastedTotal' > 'totalBudget': Cảnh báo (ví dụ: "Hãy cẩn thận! Bạn có nguy cơ vượt ngân sách!").
+
+    note: Hãy cố gắng kết thúc câu trả lời bằng câu chúc mừng nếu dữ liệu tích cực và động viên nếu tiêu cực, tránh kết thúc bằng câu hỏi mở.
   `;
 
   const prompt = `Bạn là một trợ lý tài chính ảo thân thiện tên là FinAI.
@@ -632,6 +634,70 @@ const _generateForecastReply = async (data: any): Promise<string> => {
     Chỉ dẫn: ${instruction}
   `;
   return await askGemini(prompt);
+};
+
+/**
+ * Formatter cho add_transaction
+ */
+const _formatAddTransaction = (data: any): string => {
+  // data là object transaction vừa tạo
+  const amount = data.amount.toLocaleString("vi-VN");
+  const currency = data.currency || "VND";
+  const categoryName = getCategoryDisplayName(data.category);
+  const date = new Date(data.date).toLocaleDateString("vi-VN");
+  const note = data.note ? `(${data.note})` : "";
+  
+  const emoji = data.type === 'income' ? '💰' : '💸';
+  const action = data.type === 'income' ? 'thu nhập' : 'chi tiêu';
+
+  return `✅ Đã thêm khoản ${action} thành công!
+${emoji} **${categoryName}**: ${amount} ${currency}
+📅 Ngày: ${date} ${note}`;
+};
+
+/**
+ * Formatter cho add_budget
+ */
+const _formatAddBudget = (data: any): string => {
+  const currency = data.currency || "VND";
+  const totalAmountF = data.totalAmount.toLocaleString("vi-VN");
+  const month = data.month;
+  const year = data.year;
+  
+  // Kiểm tra xem user vừa update cái gì
+  const updatedKey = data._updatedCategory; // "TOTAL" hoặc "food"...
+
+  if (updatedKey === "TOTAL") {
+    return `✅ Đã cập nhật **Tổng ngân sách** tháng ${month}/${year}:
+💵 Tổng hạn mức: **${totalAmountF} ${currency}**
+(Các ngân sách danh mục con vẫn được giữ nguyên)`;
+  } 
+  
+  // Trường hợp update danh mục con
+  const categoryName = getCategoryDisplayName(updatedKey);
+  // Tìm số tiền của danh mục đó trong mảng categories
+  const catItem = data.categories.find((c: any) => c.category === updatedKey);
+  const subAmountF = catItem ? catItem.amount.toLocaleString("vi-VN") : "0";
+
+  return `✅ Đã đặt ngân sách cho **${categoryName}**:
+💵 Hạn mức riêng: **${subAmountF} ${currency}**
+📊 Trong tổng ngân sách: **${totalAmountF} ${currency}** (Tháng ${month}/${year})`;
+};
+
+/**
+ * Formatter cho add_goal
+ */
+const _formatAddGoal = (data: any): string => {
+  const name = data.name;
+  const target = data.targetOriginalAmount.toLocaleString("vi-VN");
+  const currency = data.targetCurrency || "VND";
+  const date = new Date(data.targetDate).toLocaleDateString("vi-VN");
+
+  return `✅ Đã tạo mục tiêu tiết kiệm mới!
+🏁 Mục tiêu: **${name}**
+💰 Số tiền cần: **${target} ${currency}**
+📅 Hạn chót: ${date}
+💪 Cố lên nhé!`;
 };
 
 
@@ -723,6 +789,15 @@ export const generateReply = async (
       
     case "forecast_spending":
       return await _generateForecastReply(apiData);
+
+    case "add_transaction":
+      return _formatAddTransaction(apiData);
+      
+    case "add_budget":
+      return _formatAddBudget(apiData);
+
+    case "add_goal":
+      return _formatAddGoal(apiData);
     // (Thêm các case phức tạp khác vào đây)
     // case "average_spending_base_on_income":
 

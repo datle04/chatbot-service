@@ -17,6 +17,9 @@ import { getDailyAllowance } from "../intent-handlers/read/getDailyAllowance";
 import { getAverageTransactionValue } from "../intent-handlers/read/getAverageTransactionValue";
 import { getPeriodComparison } from "../intent-handlers/read/getPeriodComparison";
 import { getSpendingForecast } from "../intent-handlers/read/getSpendingForecast";
+import { addTransaction } from "../intent-handlers/write/addTransaction";
+import { addBudget } from "../intent-handlers/write/addBudget";
+import { addGoal } from "../intent-handlers/write/addGoal";
 
 // Import các file xử lý cụ thể
 // import { getTotalExpense } from '../intent-handlers/read/getTotalExpense';
@@ -75,7 +78,9 @@ const intentMap: {
   */
 
   // Write Intents
-  // add_transaction: addTransaction,
+  add_transaction: addTransaction,
+  add_budget: addBudget,
+  add_goal: addGoal,
 };
 
 // Hàm "điều phối" (Router)

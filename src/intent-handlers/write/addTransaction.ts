@@ -1,56 +1,60 @@
 // File: src/intent-handlers/write/addTransaction.ts
 
-import { ExtractedData } from "../../services/geminiExtractor";
-import { HandlerResult } from "../../services/intentHandler";
 import { createFinTrackApiClient } from "../../services/fintrackClient";
-// import { getCurrencyFromUser } from ... // (Bạn cần hàm này)
+import { HandlerResult } from "../../services/intentHandler";
+import { ExtractedData } from "../../services/geminiExtractor";
+import { normalizeCategory, getCategoryDisplayName } from "../../types/categoryMapper";
+import { generateReply } from "../../services/geminiReplyService";
 
 export const addTransaction = async (
   data: ExtractedData
 ): Promise<HandlerResult> => {
-  const { token, amount, category, description, currency_cue, specificDate } = data;
+  // Dữ liệu lúc này đã SẠCH và CHUẨN từ AI
+  const { token, amount, category, description, currency, transactionDate, type } = data;
 
-  // 1. Kiểm tra thông tin bắt buộc
-  // (Đây là ví dụ đơn giản, bạn có thể hỏi lại chi tiết hơn)
-  if (!amount || !category) {
-    // TODO: Lưu context để biết là đang hỏi dở
-    return {
-      reply: `Tôi cần thêm thông tin. Bạn muốn thêm bao nhiêu tiền và cho danh mục nào? (Ví dụ: 50k Ăn uống)`,
-    };
+  if (!token) return { reply: "Lỗi: Phiên xác thực không hợp lệ." };
+
+  // 1. VALIDATION (Vẫn cần thiết để đảm bảo AI không trả về null)
+  if (!amount) {
+    return { reply: "Bạn muốn thêm giao dịch bao nhiêu tiền?" };
+  }
+  if (!category || category === 'other') {
+     // Nếu AI trả về 'other', có thể hỏi lại hoặc chấp nhận luôn tùy bạn
+     // Ở đây ta chấp nhận luôn, nhưng log warning
   }
 
-  // 2. Xử lý tiền tệ (Như đã bàn)
-  // const userPreferredCurrency = await getCurrencyFromUser(token); // Giả sử
-  const userPreferredCurrency = "VND"; // Tạm thời
-  let finalAmount = amount;
-  let finalCurrency = userPreferredCurrency;
+  // 2. LOGIC XỬ LÝ (Đã được AI làm giúp 90%)
+  // Ngày tháng: Mặc định hôm nay nếu AI trả về null
+  const date = transactionDate || new Date().toISOString();
+  
+  // Loại giao dịch: Nếu AI chưa đoán được, mặc định expense
+  const finalType = type || "expense"; 
 
-  if (currency_cue === "k" || currency_cue === "vnd") {
-    finalCurrency = "VND";
-    if (currency_cue === "k") finalAmount *= 1000;
-  } else if (currency_cue === "$" || currency_cue === "usd") {
-    finalCurrency = "USD";
-  }
-  // ... (thêm logic cho các tiền tệ khác)
-
-  // 3. Gửi API
   try {
-    const apiClient = createFinTrackApiClient(token!);
-    await apiClient.post("/transactions", {
-      amount: finalAmount,
-      currency: finalCurrency,
-      category: category,
-      note: description || `Giao dịch ${category}`,
-      date: specificDate || new Date().toISOString(),
+    const apiClient = createFinTrackApiClient(token);
+
+    // 3. GỌI API (Gửi thẳng dữ liệu đã chuẩn hóa)
+    const res = await apiClient.post("/transaction", {
+      amount: amount,       // AI đã đổi 50k -> 50000
+      category: category,   // AI đã đổi "cà phê" -> "food"
+      currency: currency || "VND", // AI đã đổi "đô" -> "USD"
+      date: date,
+      note: description || "Giao dịch mới",
+      type: finalType,
     });
 
+    const createdTransaction = res.data.transaction;
+
+    // 4. GỌI REPLY SERVICE
+    const replyString = await generateReply("add_transaction", createdTransaction, null);
+
     return {
-      reply: `Đã thêm giao dịch: ${finalAmount.toLocaleString()} ${finalCurrency} cho ${category}.`,
+      reply: replyString,
+      data: createdTransaction 
     };
+
   } catch (error) {
-    console.error("Lỗi khi thêm giao dịch:", error);
-    return {
-      reply: "Rất tiếc, tôi không thể thêm giao dịch lúc này. Vui lòng thử lại.",
-    };
+    console.error("Lỗi add transaction:", error);
+    return { reply: "Rất tiếc, đã có lỗi xảy ra khi lưu giao dịch." };
   }
 };
