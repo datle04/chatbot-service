@@ -6,6 +6,8 @@
 "rootDir": "src",
 "strict": true,
 "esModuleInterop": true,
+"skipLibCheck": true,     // <--- QUAN TRỌNG: Bỏ qua check lỗi trong node_modules
+"noEmitOnError": false,
 "forceConsistentCasingInFileNames": true
 }
 }
