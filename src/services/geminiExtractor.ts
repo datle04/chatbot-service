@@ -11,13 +11,17 @@ export interface ExtractedData {
   category?: string; // AI trả về thẳng "food", không phải "cà phê"
   amount?: number;   // AI trả về thẳng 50000, không phải 50
   description?: string;
-  // specificDate?: string | null; 
   transactionDate?: string | null;
   compareTimeRange?: { startDate: string; endDate: string } | null;
   comparisonType?: "income" | "expense";
   goal_name?: string;
   token?: string; 
   userId?: string; 
+  // New fields
+  target_id?: "last" | string;
+  recurring_keyword?: string;
+  new_amount?: number;
+  new_category?: string;
 }
 
 const SYSTEM_CATEGORIES = [
@@ -45,6 +49,10 @@ const READ_INTENTS = [
 // Danh sách các intent write (specificDate)
 const WRITE_INTENTS = ["add_transaction", "add_budget", "add_goal"];
 
+const UPDATE_INTENTS = ["delete_last_transaction", "update_transaction", "cancel_recurring"]
+
+const HELPER_INTENTS = ["financial_advice", "help"]
+
 
 export const getExtractedDataFromGemini = async (
   question: string,
@@ -60,19 +68,15 @@ export const getExtractedDataFromGemini = async (
   Danh sách intent hợp lệ: [
     ${READ_INTENTS.map(i => `"${i}"`).join(", ")},
     ${WRITE_INTENTS.map(i => `"${i}"`).join(", ")},
+    ${UPDATE_INTENTS.map(i => `"${i}"`).join(", ")},
+    ${HELPER_INTENTS.map(i => `"${i}"`).join(", ")},
     "unknown"
   ]
 
   Các thực thể (Entities) cần trích xuất:
   1.  "intent": (string) Bắt buộc.
   2.  "timeRange": (object) { "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }.
-  3. "category": (string) Bắt buộc. Phân tích từ khóa của người dùng và ÁNH XẠ về một trong các category hệ thống ở trên. 
-     - Ví dụ: "cà phê", "ăn sáng" -> "food". 
-     - "đổ xăng", "grab" -> "transportation". 
-     - "đi xem phim" -> "entertainment".
-     - Nếu người dùng nói "đặt tổng ngân sách", "ngân sách tháng này", trả về "TOTAL".
-      - Nếu là danh mục cụ thể, trả về key hệ thống ("food", "transportation"...).
-     - Nếu không tìm thấy map phù hợp, trả về "other".
+  3. "category": (string) Ánh xạ về list: [${SYSTEM_CATEGORIES}]. "other" nếu không khớp. "TOTAL" nếu hỏi ngân sách tổng.
   4. "type": (string) "income" hoặc "expense". Tự suy luận dựa trên category.
      - Ví dụ: category là "salary", "bonus" -> "income".
      - Còn lại đa số là "expense".
@@ -88,6 +92,7 @@ export const getExtractedDataFromGemini = async (
   10. "compareTimeRange": (object) { "startDate": "...", "endDate": "..." } (Kỳ so sánh)
   11. "comparisonType": (string) "income" hoặc "expense".
 ---
+
 ### QUY TẮC LOGIC (Rất quan trọng)
 
 Bạn PHẢI dựa vào "intent" để quyết định điền thực thể ngày tháng nào:
@@ -112,7 +117,29 @@ Bạn PHẢI dựa vào "intent" để quyết định điền thực thể ngà
    - Nếu người dùng chỉ nói "So với tháng trước", hãy MẶC ĐỊNH "timeRange" là "tháng này".
    - **Bắt buộc** trích xuất "comparisonType" (là "income" hay "expense"). Nếu không rõ, MẶC ĐỊNH là "expense".
 
+  **4.Intent "SỬA/XÓA" (update_..., delete_...):**
+   - "delete_last_transaction": set "target_id": "last".
+   - "update_transaction": set "target_id": "last". Tìm "new_amount" hoặc "new_category".
+   - "cancel_recurring": Tìm "recurring_keyword".
+  
+   **5.Intent "AI" (financial_advice):** Chỉ cần intent.
 ---
+
+### PHÂN BIỆT INTENT QUAN TRỌNG (Rất quan trọng):
+
+1. **"financial_advice" (Tư vấn/Đánh giá):**
+   - Dùng khi câu hỏi mang tính **CHUNG CHUNG**, hỏi về **CHẤT LƯỢNG** hoặc **CẢM XÚC**.
+   - Từ khóa nhận diện: "thế nào", "ra sao", "ổn không", "tốt không", "đánh giá", "tư vấn", "lời khuyên", "sức khỏe tài chính", "tình hình tài chính".
+   - Ví dụ: "Tài chính tháng này thế nào?", "Tôi chi tiêu có hợp lý không?", "Có lời khuyên gì không?".
+
+2. **"compare_income_vs_expense" (So sánh Thu/Chi):**
+   - Dùng khi câu hỏi mang tính **SỐ HỌC**, tính toán cụ thể sự chênh lệch.
+   - Từ khóa nhận diện: "so sánh", "cân đối", "dư bao nhiêu", "lợi nhuận", "âm hay dương".
+   - Ví dụ: "So sánh thu và chi tháng này", "Tháng này tôi dư được bao nhiêu?", "Thu nhập có bù được chi tiêu không?".
+
+3. **"check_budget_status" (Kiểm tra ngân sách):**
+   - Dùng khi nhắc cụ thể đến từ "ngân sách" (budget) hoặc "hạn mức".
+   - Ví dụ: "Ngân sách ăn uống còn bao nhiêu?", "Tôi lố ngân sách chưa?".
     
   QUY TẮC XỬ LÝ NGỮ CẢNH:
   ${ prevContext ? `Ngữ cảnh trước đó: { "intent": "${prevContext.intent}", "timeRange": ${JSON.stringify(prevContext.timeRange)} }` : "Không có ngữ cảnh trước đó." }
@@ -128,24 +155,52 @@ Bạn PHẢI dựa vào "intent" để quyết định điền thực thể ngà
   TRẢ VỀ JSON (Chỉ JSON, không có giải thích):
   `;
 
+  console.log("⏳ Đang gửi prompt lên Gemini...");
   const rawResult = await askGemini(prompt);
-  const parsedData = JSON.parse(rawResult.replace(/```json|```/g, "").trim());
+  console.log("🤖 Gemini Raw Response:", rawResult);
 
-  
-  // fallback về date mặc định nếu không có ngày tháng
-  if (READ_INTENTS.includes(parsedData.intent) && !parsedData.timeRange) {
-    parsedData.timeRange = {
-      startDate: DEFAULT_START_DATE,
-      endDate: DEFAULT_END_DATE,
+  try {
+    // BƯỚC 1: Làm sạch dữ liệu thô
+    // Xóa markdown code block (```json ... ```)
+    let cleanJson = rawResult.replace(/```json|```/g, "").trim();
+
+    // BƯỚC 2: Trích xuất JSON bằng Regex (Phòng trường hợp Gemini nói nhảm ở đầu/cuối)
+    // Tìm từ dấu { đầu tiên đến dấu } cuối cùng
+    const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      cleanJson = jsonMatch[0];
+    }
+
+    // BƯỚC 3: Parse JSON
+    const parsedData = JSON.parse(cleanJson);
+
+    // --- LOGIC XỬ LÝ DỮ LIỆU SAU KHI PARSE THÀNH CÔNG ---
+
+    // 1. Fallback về date mặc định nếu là intent ĐỌC mà thiếu ngày
+    if (READ_INTENTS.includes(parsedData.intent) && !parsedData.timeRange) {
+      parsedData.timeRange = {
+        startDate: DEFAULT_START_DATE,
+        endDate: DEFAULT_END_DATE,
+      };
+    }
+
+    // 2. Đảm bảo clean các trường không cần thiết dựa trên intent
+    if (READ_INTENTS.includes(parsedData.intent)) {
+      parsedData.transactionDate = null; 
+    } else if (WRITE_INTENTS.includes(parsedData.intent)) {
+      parsedData.timeRange = null; 
+    }
+
+    return parsedData;
+  } catch (error) {
+    console.error("❌ Lỗi Parse JSON từ Gemini:", error);
+    console.error("Văn bản gây lỗi:", rawResult);
+
+    // BƯỚC 4: Trả về Object mặc định "An toàn" để App không crash
+    return {
+      intent: "unknown",
+      timeRange: null,
+      transactionDate: null
     };
   }
-
-  // 2. Đảm bảo các trường được trả về đúng như quy tắc phòng AI trả sai
-  if (READ_INTENTS.includes(parsedData.intent)) {
-    parsedData.transactionDate = null; 
-  } else if (WRITE_INTENTS.includes(parsedData.intent)) {
-    parsedData.timeRange = null; 
-  }
-  
-  return parsedData;
 };

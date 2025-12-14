@@ -4,6 +4,7 @@ import { askGemini } from "./geminiService";
 import { ExtractedData } from "./geminiExtractor";
 import { getCategoryDisplayName } from "../types/categoryMapper";
 import { formatGoalCurrency } from "../helper/formatGoalCurrency";
+import { formatCurrency } from "../utils/formatCurrency";
 
 // --- CÁC HÀM TIỆN ÍCH (Private) ---
 
@@ -597,6 +598,35 @@ const _generateComparisonReply = async (data: any): Promise<string> => {
   return await askGemini(prompt);
 };
 
+const _formatDeleteTransactionReply = (tx: any): string => {
+    if (!tx) return "Đã xóa thành công.";
+
+    // Xử lý hiển thị Category (có thể là object hoặc string)
+    const categoryName = tx.category?.name || tx.category || "Khác";
+    const amountStr = formatCurrency(tx.amount, tx.currency || "VND");
+    const dateStr = new Date(tx.date).toLocaleDateString("vi-VN");
+    const noteStr = tx.note ? ` ("${tx.note}")` : "";
+
+    return `🗑️ **Đã xóa giao dịch vừa nhập:**
+- **Số tiền:** ${amountStr}
+- **Mục:** ${categoryName}${noteStr}
+- **Ngày:** ${dateStr}
+
+✅ Số dư và các mục tiêu liên quan đã được cập nhật lại.`;
+};
+
+const _formatCancelRecurringReply = (template: any): string => {
+    // template là bản ghi giao dịch gốc (isRecurring=true)
+    const amountStr = formatCurrency(template.amount, template.currency || "VND");
+    const noteStr = template.note || "Không tên";
+    
+    return `🛑 **Đã hủy gói định kỳ thành công:**
+- **Tên:** ${noteStr}
+- **Số tiền:** ${amountStr} / tháng (hoặc kỳ)
+
+Từ giờ hệ thống sẽ không tự động trừ tiền cho khoản này nữa.`;
+};
+
 /**
  * (Generator phức tạp) Phân tích dự đoán chi tiêu
  */
@@ -700,6 +730,58 @@ const _formatAddGoal = (data: any): string => {
 💪 Cố lên nhé!`;
 };
 
+/**
+ * Formatter cho get_financial_advice
+ */
+const _generateAIAdvice = async (data: any): Promise<string> => {
+    const currency = data.currency || "VND"; 
+    
+    // Xử lý text hiển thị ngân sách
+    let budgetText = "Chưa thiết lập";
+    if (data.budget) {
+        const converted = formatCurrency(data.budget.amount, currency);
+        // Nếu tiền gốc KHÁC tiền hiển thị (VD: Gốc USD, Hiển thị VND) -> Hiện cả hai
+        if (data.budget.originalCurrency !== currency) {
+             const original = formatCurrency(data.budget.originalAmount, data.budget.originalCurrency);
+             budgetText = `${converted} (Gốc: ${original})`;
+        } else {
+             budgetText = converted;
+        }
+    }
+
+    // Chuẩn bị dữ liệu cho Prompt
+    const summary = `
+    - Thời gian: Tháng ${data.month}/${data.year}
+    - Đơn vị tiền tệ báo cáo: ${currency}
+    - Tổng thu: ${formatCurrency(data.income, currency)}
+    - Tổng chi: ${formatCurrency(data.expense, currency)}
+    - Số dư: ${formatCurrency(data.balance, currency)}
+    - Ngân sách: ${budgetText}
+    - Top chi tiêu: ${data.topSpending.map((t: any) => `${t.key} (${formatCurrency(t.amount, currency)})`).join(", ")}
+    `;
+
+    const prompt = `
+    Bạn là chuyên gia tài chính FinTrack.
+    User hỏi về tình hình tài chính tháng này. Dữ liệu:
+    ${summary}
+
+    NHIỆM VỤ:
+    Đưa ra nhận xét và lời khuyên (3-4 câu).
+    
+    QUY TẮC:
+    1. **Logic Ngân sách:** - So sánh 'Tổng chi' với 'Ngân sách'. 
+       - Nếu user có ngân sách gốc (ví dụ USD) mà đang xem VND, hãy nhắc khéo để họ biết bạn hiểu rõ context.
+    . **Thái độ:** Thân thiện, dùng emoji.
+    `;
+
+    try {
+        const advice = await askGemini(prompt);
+        return advice;
+    } catch (e) {
+        return "Hiện tại tôi chưa thể phân tích dữ liệu.";
+    }
+};
+
 
 // --- HÀM CHÍNH (PUBLIC) ---
 
@@ -771,6 +853,13 @@ export const generateReply = async (
       return _formatDailyAllowance(apiData, timeRange);
     case "average_transaction_value":
       return _formatAverageTransactionValue(apiData, timeRange);
+    
+    case "delete_last_transaction":
+      return _formatDeleteTransactionReply(apiData);
+
+    case "cancel_recurring":
+      return _formatCancelRecurringReply(apiData);
+
     // (Thêm các case đơn giản khác vào đây)
     
     // case "highest_expense":
@@ -798,6 +887,9 @@ export const generateReply = async (
 
     case "add_goal":
       return _formatAddGoal(apiData);
+
+    case "financial_advice": 
+      return _generateAIAdvice(apiData);
     // (Thêm các case phức tạp khác vào đây)
     // case "average_spending_base_on_income":
 
