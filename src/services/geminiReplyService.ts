@@ -5,8 +5,20 @@ import { ExtractedData } from "./geminiExtractor";
 import { getCategoryDisplayName } from "../types/categoryMapper";
 import { formatGoalCurrency } from "../helper/formatGoalCurrency";
 import { formatCurrency } from "../utils/formatCurrency";
+import { askAI } from "./aiProvider";
 
 // --- CÁC HÀM TIỆN ÍCH (Private) ---
+const callAI = async (prompt: string): Promise<string> => {
+    try {
+        const { text, source } = await askAI(prompt);
+        // (Optional) Log để biết câu trả lời này đến từ đâu
+        if (source === 'groq') console.log("💡 Câu trả lời này được sinh bởi Groq.");
+        return text;
+    } catch (error) {
+        console.error("❌ Lỗi sinh câu trả lời:", error);
+        return "Xin lỗi, hiện tại tôi không thể phân tích dữ liệu chi tiết.";
+    }
+};
 
 /**
  * (Helper) Định dạng khoảng thời gian
@@ -468,7 +480,7 @@ const _formatGoalProgress = (data: any): string => {
 /**
  * (Generator phức tạp) Phân tích xu hướng
  */
-const _generateTrendReply = async (intent: string, data: any): Promise<string> => {
+export const _generateTrendReply = async (intent: string, data: any): Promise<string> => {
   const dataString = JSON.stringify(data);
   const trendType = intent === "spending_trend" ? "chi tiêu" : "thu nhập";
 
@@ -488,9 +500,10 @@ const _generateTrendReply = async (intent: string, data: any): Promise<string> =
     \`\`\`
     Chỉ dẫn: ${instruction}
   `;
-  return await askGemini(prompt);
+  
+  // SỬ DỤNG HÀM MỚI
+  return await callAI(prompt);
 };
-
 /**
  * (Formatter đơn giản) Trả lời cho average_spending
  */
@@ -541,9 +554,9 @@ const _formatAverageTransactionValue = (data: any, timeRange: ExtractedData["tim
 /**
  * (Generator phức tạp) Tóm tắt tiết kiệm
  */
-const _generateSavingSummary = async (data: any, timeRange: ExtractedData["timeRange"]): Promise<string> => {
+export const _generateSavingSummary = async (data: any, timeRange: ExtractedData["timeRange"]): Promise<string> => {
   const dataString = JSON.stringify(data, null, 2);
-  const dateText = _formatDateRange(timeRange);
+  const dateText = _formatDateRange(timeRange); // Giả sử bạn có hàm này
 
   const instruction = `Viết một bản tóm tắt tình hình tiết kiệm ${dateText} dựa trên dữ liệu.
     - Dữ liệu có (totalIncome, totalExpense, balance, currency).
@@ -562,13 +575,14 @@ const _generateSavingSummary = async (data: any, timeRange: ExtractedData["timeR
     \`\`\`
     Chỉ dẫn: ${instruction}
   `;
-  return await askGemini(prompt);
+  
+  return await callAI(prompt);
 };
 
 /**
  * (Generator phức tạp) Phân tích so sánh kỳ-với-kỳ
  */
-const _generateComparisonReply = async (data: any): Promise<string> => {
+export const _generateComparisonReply = async (data: any): Promise<string> => {
   const dataString = JSON.stringify(data, null, 2);
   const typeText = data.type === 'expense' ? 'chi tiêu' : 'thu nhập';
 
@@ -595,7 +609,8 @@ const _generateComparisonReply = async (data: any): Promise<string> => {
     \`\`\`
     Chỉ dẫn: ${instruction}
   `;
-  return await askGemini(prompt);
+  
+  return await callAI(prompt);
 };
 
 const _formatDeleteTransactionReply = (tx: any): string => {
@@ -630,7 +645,7 @@ Từ giờ hệ thống sẽ không tự động trừ tiền cho khoản này n
 /**
  * (Generator phức tạp) Phân tích dự đoán chi tiêu
  */
-const _generateForecastReply = async (data: any): Promise<string> => {
+export const _generateForecastReply = async (data: any): Promise<string> => {
   const dataString = JSON.stringify(data, null, 2);
 
   const instruction = `
@@ -663,9 +678,9 @@ const _generateForecastReply = async (data: any): Promise<string> => {
     \`\`\`
     Chỉ dẫn: ${instruction}
   `;
-  return await askGemini(prompt);
+  
+  return await callAI(prompt);
 };
-
 /**
  * Formatter cho add_transaction
  */
@@ -733,7 +748,7 @@ const _formatAddGoal = (data: any): string => {
 /**
  * Formatter cho get_financial_advice
  */
-const _generateAIAdvice = async (data: any): Promise<string> => {
+export const _generateAIAdvice = async (data: any): Promise<string> => {
     const currency = data.currency || "VND"; 
     
     // Xử lý text hiển thị ngân sách
@@ -774,14 +789,8 @@ const _generateAIAdvice = async (data: any): Promise<string> => {
     . **Thái độ:** Thân thiện, dùng emoji.
     `;
 
-    try {
-        const advice = await askGemini(prompt);
-        return advice;
-    } catch (e) {
-        return "Hiện tại tôi chưa thể phân tích dữ liệu.";
-    }
+    return await callAI(prompt);
 };
-
 
 // --- HÀM CHÍNH (PUBLIC) ---
 

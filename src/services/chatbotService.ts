@@ -1,9 +1,8 @@
-// File: src/services/chatbotService.ts
 import { normalizeCategory } from "../types/categoryMapper";
 import { getUserContext, saveUserContext } from "./contextManager";
 import { createFinTrackApiClient } from "./fintrackClient";
-import { getExtractedDataFromGemini, ExtractedData } from "./geminiExtractor"; // <-- Dùng file mới
-import { handleIntent } from "./intentHandler"; // <-- Dùng file mới
+import { getExtractedDataFromAI, ExtractedData } from "./geminiExtractor"; // <-- Import từ file mới
+import { handleIntent } from "./intentHandler";
 
 export const chatbotService = async (
   userId: string,
@@ -13,18 +12,24 @@ export const chatbotService = async (
   try {
     const prevContext = await getUserContext(userId);
 
-    const parsedData: ExtractedData = await getExtractedDataFromGemini(
+    // Gọi hàm Extractor mới (Đã tích hợp Gemini + Groq)
+    const parsedData: ExtractedData = await getExtractedDataFromAI(
       question,
       prevContext
     );
 
+    // [Optional] Log cảnh báo nếu đang chạy chế độ Backup (Groq)
+    if (parsedData._ai_source === 'groq') {
+        console.log("🚀 [System info] Request đang được xử lý bởi Groq (Do Gemini quá tải)");
+    }
+
+    // --- CÁC PHẦN DƯỚI ĐÂY GIỮ NGUYÊN ---
+
     // Chuẩn hóa category
     if (parsedData.category_keyword) {
-      // 'category' sẽ là key hệ thống (ví dụ: "food")
       parsedData.category = normalizeCategory(parsedData.category_keyword);
     }
 
-    // Gắn thêm token và userId để các handler sử dụng
     parsedData.token = token;
     parsedData.userId = userId;
 
@@ -39,22 +44,27 @@ export const chatbotService = async (
         apiClient.post("/chat-history", { role: "bot", text: result.reply }),
       ]);
     } catch (error) {
-      console.error("⚠️ Lỗi khi lưu chat history:", error);
+      console.error("⚠️ Lỗi lưu chat history:", error);
     }
 
-    // 4️⃣ Lưu context mới
+    // Lưu context mới
     await saveUserContext(userId, {
       intent: parsedData.intent,
       timeRange: parsedData.timeRange,
     });
 
-    // 5️⃣ Trả kết quả
     return {
       intent: parsedData.intent,
       timeRange: parsedData.timeRange,
       result,
+      source: parsedData._ai_source // Trả về để Frontend biết (nếu cần)
     };
   } catch (error) {
     console.error("❌ chatbotService error:", error);
+    // Có thể return một câu lỗi thân thiện
+    return {
+        intent: "error",
+        result: { reply: "Hệ thống đang bận, vui lòng thử lại sau giây lát." }
+    };
   }
 };
