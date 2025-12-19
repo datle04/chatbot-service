@@ -25,5 +25,8 @@ app.use('/chat', chatbotRoutes);
 app.get('/', (req, res) => {
     res.send('Chatbot service API is running');
 });
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'Ok', message: 'Server is awake (Keep-Alive)!' });
+});
 
 export default app;
